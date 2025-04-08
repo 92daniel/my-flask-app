@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <title>大眾運輸推薦路線查詢</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css" />
+    <style>
+        #map { height: 500px; }
+        .info-box { margin-top: 1rem; }
+    </style>
+</head>
+<body class="container py-4">
+    <h2>🚏 高鐵出發 公車路線推薦系統</h2>
+
+    <div class="row mt-3">
+        <div class="col-md-6">
+            <label for="timeSelect" class="form-label"><strong>請選擇出發時間（04:00 ～ 23:55，每 5 分）</strong></label>
+            <select id="timeSelect" class="form-select mb-2">
+                <option value="">-- 選擇時間 --</option>
+            </select>
+            <button id="nowBtn" class="btn btn-outline-primary btn-sm">使用目前時間</button>
+        </div>
+    </div>
+
+    <div class="row mt-3">
+        <div class="col">
+            <div id="map"></div>
+        </div>
+    </div>
+
+    <div class="row mt-3">
+        <div class="col">
+            <button id="searchBtn" class="btn btn-success" disabled>🔍 搜尋推薦路線</button>
+        </div>
+    </div>
+
+    <div class="info-box" id="resultBox"></div>
+
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map').setView([24.808155, 121.040223], 13);
+        const markerGroup = L.layerGroup().addTo(map);
+        let selectedDestination = null;
+
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '© OpenStreetMap contributors'
+        }).addTo(map);
+
+        // 建立 5 分鐘為單位的時間下拉選單
+        const timeSelect = document.getElementById("timeSelect");
+        for (let h = 4; h < 24; h++) {
+            for (let m = 0; m < 60; m += 10) {
+                const hh = h.toString().padStart(2, '0');
+                const mm = m.toString().padStart(2, '0');
+                const t = `${hh}:${mm}`;
+                const opt = document.createElement("option");
+                opt.value = t;
+                opt.innerText = t;
+                timeSelect.appendChild(opt);
+            }
+        }
+
+        // 使用現在時間
+        document.getElementById("nowBtn").addEventListener("click", () => {
+            const now = new Date();
+            const hh = now.getHours().toString().padStart(2, '0');
+            const mm = Math.floor(now.getMinutes() / 10) * 10;
+            const mmStr = mm.toString().padStart(2, '0');
+            timeSelect.value = `${hh}:${mmStr}`;
+            updateSearchButtonState();
+        });
+
+        // 點地圖選目的地
+        map.on('click', function(e) {
+            markerGroup.clearLayers();
+            const marker = L.marker(e.latlng).addTo(markerGroup);
+            selectedDestination = e.latlng;
+            updateSearchButtonState();
+        });
+
+        // 根據選項啟用/停用搜尋按鈕
+        function updateSearchButtonState() {
+            document.getElementById("searchBtn").disabled = !(selectedDestination && timeSelect.value);
+        }
+        timeSelect.addEventListener("change", updateSearchButtonState);
+
+        // 查詢按鈕點擊
+        document.getElementById("searchBtn").addEventListener("click", () => {
+            if (!selectedDestination || !timeSelect.value) return;
+            const lat = selectedDestination.lat;
+            const lon = selectedDestination.lng;
+            const time = timeSelect.value;
+
+            fetch("/get_route", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lat, lon, time })
+            })
+            .then(res => res.json())
+            .then(data => {
+                const box = document.getElementById("resultBox");
+                if (!data.success) {
+                    box.innerHTML = `<div class="alert alert-danger">${data.message}</div>`;
+                    return;
+                }
+
+                // 顯示簡略路線與到達時間
+                let html = `<div class="card"><div class="card-body">`;
+                html += `<h5 class="card-title">🚍 推薦路線（總耗時：${data.總耗時}，到達時間：${data.到達時間}）</h5>`;
+                html += `<ul class="list-group list-group-flush">`;
+                data.簡略路線.forEach(item => {
+                    if (item[0] === "走路" || item[0] === "步行轉乘") {
+                        html += `<li class="list-group-item">🚶‍♂️ ${item[0]} → ${item[1]}</li>`;
+                    } else if (item[0] === "抵達") {
+                        html += `<li class="list-group-item">✅ 抵達目的地：${item[1]}</li>`;
+                    } else {
+                        html += `<li class="list-group-item">🚌 搭乘 ${item[0]}：${item[1]} ${item[2] || ""}</li>`;
+                    }
+                });
+                html += `</ul></div></div>`;
+                box.innerHTML = html;
+
+                // 在地圖畫出經緯度路徑
+                if (window.routeLine) {
+                    map.removeLayer(window.routeLine);
+                }
+                const latlngs = data.經緯度路徑.map(p => [p.lat, p.lng]);
+                window.routeLine = L.polyline(latlngs, { color: 'blue' }).addTo(map);
+                map.fitBounds(window.routeLine.getBounds(), { padding: [50, 50] });
+            });
+        });
+    </script>
+</body>
+</html>

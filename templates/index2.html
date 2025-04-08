@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大眾運輸推薦路線查詢</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.3/dist/leaflet.css"
+          integrity="sha256-kLaT2GOSpHechhsozzB+flnD+zUyjE2LlfWPgU04xyI="
+          crossorigin=""/>
+    <style>
+        #map-container {
+            height: 600px;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            margin-top: 10px;
+        }
+        #map {
+            height: 100%;
+        }
+        .transport-icon {
+            font-size: 20px;
+            margin-right: 5px;
+        }
+        .custom-marker {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-weight: bold;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+        }
+        .route-leg {
+            padding-left: 20px;
+            border-left: 3px solid #dee2e6;
+            margin-bottom: 15px;
+        }
+        .route-summary {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 15px;
+            margin-bottom: 20px;
+        }
+        .route-details {
+            background-color: #f8f9fa;
+            border-radius: 5px;
+            padding: 15px;
+        }
+        .direction-text {
+            font-style: italic;
+            color: #6c757d;
+        }
+        .map-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+        .map-controls .btn {
+            font-weight: bold;
+            padding: 8px 15px;
+        }
+        #searchBtn {
+            min-width: 100px;
+        }
+        #clearBtn {
+            min-width: 100px;
+        }
+        .instruction-text {
+            color: #6c757d;
+            font-style: italic;
+        }
+    </style>
+</head>
+<body class="container py-4">
+    <h2 class="text-center mb-4">🚍 高鐵出發 公車路線推薦系統</h2>
+
+    <div class="row">
+        <div class="col">
+            <div class="map-controls">
+                <div class="instruction-text">請先在地圖上點選目的地位置</div>
+                <div>
+                    <button id="searchBtn" class="btn btn-success" disabled>搜尋路線</button>
+                    <button id="clearBtn" class="btn btn-outline-secondary ms-2">清除全部</button>
+                </div>
+            </div>
+            <div id="map-container">
+                <div id="map"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row mt-4">
+        <div class="col">
+            <div id="resultBox">
+                <!-- 結果將在這裡動態生成 -->
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"
+            integrity="sha256-WBkoXOwTeyKclOHuWtc+i2uENFpDZ9YPdf5Hf+D7ewM="
+            crossorigin=""></script>
+    <script>
+        // 初始化地圖
+        const map = L.map('map').setView([24.808155, 121.040223], 14);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        }).addTo(map);
+
+        // 高鐵站座標
+        const hsrStation = [24.80818, 121.0405];
+        let selectedDestination = null;
+        let destinationMarker = null;
+        let routeLine = null;
+        let routeMarkers = [];
+        let startMarker = null;
+
+        // 添加高鐵站標記
+        startMarker = L.marker(hsrStation, {
+            icon: L.divIcon({
+                className: 'start-marker',
+                html: '<div style="font-size:20px;">🚄</div><div>高鐵新竹站</div>',
+                iconSize: [40, 50],
+                iconAnchor: [20, 50]
+            }),
+            zIndexOffset: 1000
+        }).addTo(map);
+
+        // 地圖點擊事件
+        map.on('click', function(e) {
+            if (destinationMarker) map.removeLayer(destinationMarker);
+            
+            selectedDestination = e.latlng;
+            destinationMarker = L.marker(e.latlng, {
+                icon: L.divIcon({
+                    className: 'destination-marker',
+                    html: '<div style="font-size:20px;">📍</div><div>目的地</div>',
+                    iconSize: [40, 50],
+                    iconAnchor: [20, 50]
+                }),
+                zIndexOffset: 1000
+            }).addTo(map);
+            
+            document.getElementById("searchBtn").disabled = false;
+            
+            // 更新提示文字
+            document.querySelector(".instruction-text").textContent = "已選擇目的地，請點擊「搜尋路線」";
+        });
+
+        // 清除全部按鈕
+        document.getElementById("clearBtn").addEventListener("click", function() {
+            if (routeLine) map.removeLayer(routeLine);
+            routeMarkers.forEach(marker => map.removeLayer(marker));
+            routeMarkers = [];
+            
+            if (destinationMarker) {
+                map.removeLayer(destinationMarker);
+                destinationMarker = null;
+            }
+            
+            document.getElementById("resultBox").innerHTML = '';
+            document.getElementById("searchBtn").disabled = true;
+            selectedDestination = null;
+            map.setView([24.808155, 121.040223], 14);
+            
+            // 重置提示文字
+            document.querySelector(".instruction-text").textContent = "請先在地圖上點選目的地位置";
+        });
+
+        // 搜尋路線按鈕
+        document.getElementById("searchBtn").addEventListener("click", function() {
+            if (!selectedDestination) {
+                alert("請先在地圖上點選目的地");
+                return;
+            }
+
+            const lat = selectedDestination.lat;
+            const lng = selectedDestination.lng;
+            
+            document.getElementById("resultBox").innerHTML = `
+                <div class="d-flex justify-content-center align-items-center" style="height: 200px;">
+                    <div class="spinner-border text-primary" role="status">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                    <span class="ms-3">正在搜尋最佳路線...</span>
+                </div>
+            `;
+
+            fetch("/get_route", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ lat, lng })
+            })
+            .then(response => {
+                if (!response.ok) throw new Error("無法取得路線資料");
+                return response.json();
+            })
+            .then(data => {
+                if (!data.success) throw new Error(data.message || "路線搜尋失敗");
+                displayResults(data);
+            })
+            .catch(error => {
+                document.getElementById("resultBox").innerHTML = `
+                    <div class="alert alert-danger">
+                        <strong>錯誤</strong>
+                        <div>${error.message}</div>
+                    </div>
+                `;
+            });
+        });
+
+        // 顯示結果函數
+        function displayResults(data) {
+            // 清除舊路線
+            if (routeLine) map.removeLayer(routeLine);
+            routeMarkers.forEach(marker => map.removeLayer(marker));
+            routeMarkers = [];
+            
+            // 繪製新路線
+            drawRoute(data.經緯度路徑);
+            
+            // 生成結果顯示
+            const box = document.getElementById("resultBox");
+            
+            // 簡易路線 - 只顯示起訖點和方向
+            let simplifiedHTML = `
+                <div class="route-summary">
+                    <h4 class="mb-3">簡易路線</h4>
+                    <div class="d-flex mb-3">
+                        <span class="badge bg-primary me-2">總耗時: ${data.總耗時 || "未知"}</span>
+                        <span class="badge bg-primary">到達時間: ${data.到達時間 || "未知"}</span>
+                    </div>
+            `;
+            
+            // 從詳細路線提取方向資訊
+            if (data.詳細路線 && data.詳細路線.length > 0) {
+                const routeSegments = groupRouteSegments(data.詳細路線);
+                
+                routeSegments.forEach(segment => {
+                    simplifiedHTML += `
+                        <div class="route-leg mb-3">
+                            <div class="fw-bold">${segment.mode}</div>
+                            <div class="direction-text">
+                                ${segment.from} → ${segment.to}
+                                ${segment.time ? `<span class="ms-2">(${segment.time})</span>` : ''}
+                            </div>
+                        </div>
+                    `;
+                });
+            }
+            
+            simplifiedHTML += `</div>`;
+            
+            // 詳細路線
+            let detailedHTML = `
+                <div class="route-details mt-4">
+                    <h4 class="mb-3">詳細路線</h4>
+                    <div class="list-group">
+            `;
+            
+            data.詳細路線.forEach((step, index) => {
+                if (!step || step.length < 2) return;
+                
+                let icon;
+                if (step[0] === "走路") icon = "🚶‍♂️";
+                else if (step[0] === "步行轉乘") icon = "👣";
+                else if (step[0] === "抵達") icon = "✅";
+                else if (step[0].includes("高鐵") || step[0].includes("火車")) icon = "🚄";
+                else icon = "🚌";
+                
+                detailedHTML += `
+                    <div class="list-group-item">
+                        <div class="d-flex align-items-center">
+                            <span class="transport-icon">${icon}</span>
+                            <div>
+                                <strong>${step[0]}</strong> → ${step[1]}
+                                ${step[2] ? `<div class="text-muted small">時間: ${step[2]}</div>` : ''}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            });
+            
+            detailedHTML += `</div></div>`;
+            
+            box.innerHTML = simplifiedHTML + detailedHTML;
+        }
+
+        // 繪製路線函數（使用不同圖標）
+        function drawRoute(coordinates) {
+            if (!coordinates || coordinates.length === 0) return;
+            
+            // 從高鐵站開始的路線
+            const fullPath = [
+                { lat: hsrStation[0], lng: hsrStation[1], stop: "高鐵新竹站", mode: "高鐵" },
+                ...coordinates
+            ];
+            
+            // 繪製路線
+            routeLine = L.polyline(
+                fullPath.map(p => [p.lat, p.lng]), 
+                { color: '#0d6efd', weight: 5 }
+            ).addTo(map);
+            
+            // 添加站點標記
+            fullPath.forEach((point, index) => {
+                if (index === 0) return; // 跳過高鐵站
+                
+                let iconHtml;
+                const isTransfer = point.mode === "步行轉乘" || point.mode === "走路";
+                const isDestination = point.mode === "抵達";
+                
+                if (isTransfer) {
+                    iconHtml = '<div style="background:#6c757d;color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;">🚶</div>';
+                } else if (isDestination) {
+                    iconHtml = '<div style="background:#28a745;color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;">✓</div>';
+                } else if (point.mode.includes("高鐵") || point.mode.includes("火車")) {
+                    iconHtml = '<div style="background:#dc3545;color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;">🚄</div>';
+                } else {
+                    // 公車或其他交通工具
+                    iconHtml = `<div style="background:#17a2b8;color:white;border-radius:50%;width:20px;height:20px;display:flex;align-items:center;justify-content:center;">${index}</div>`;
+                }
+                
+                const marker = L.marker([point.lat, point.lng], {
+                    icon: L.divIcon({
+                        className: 'custom-marker',
+                        html: iconHtml,
+                        iconSize: [24, 24],
+                        iconAnchor: [12, 12]
+                    })
+                }).addTo(map);
+                
+                // 添加提示框
+                marker.bindTooltip(`
+                    <div class="text-center">
+                        <div><strong>${point.stop || point.mode}</strong></div>
+                        ${point.time ? `<div>時間: ${point.time}</div>` : ''}
+                    </div>
+                `);
+                
+                routeMarkers.push(marker);
+            });
+            
+            // 調整地圖視野
+            const bounds = L.latLngBounds(fullPath.map(p => [p.lat, p.lng]));
+            if (selectedDestination) bounds.extend([selectedDestination.lat, selectedDestination.lng]);
+            map.fitBounds(bounds, { padding: [50, 50] });
+        }
+
+        // 分組路線段落（用於簡易路線顯示）
+        function groupRouteSegments(steps) {
+            const segments = [];
+            let currentSegment = null;
+            
+            for (let i = 0; i < steps.length; i++) {
+                const step = steps[i];
+                if (!step || step.length < 2) continue;
+                
+                if (step[0] === "步行轉乘" || step[0] === "走路") {
+                    // 如果是步行且下一個是交通工具，則合併
+                    if (i < steps.length - 1 && steps[i+1] && steps[i+1].length >= 2 && 
+                        !["步行轉乘", "走路", "抵達"].includes(steps[i+1][0])) {
+                        continue; // 跳過步行，會在處理交通工具時合併
+                    } else {
+                        // 單獨的步行段落
+                        segments.push({
+                            mode: "步行",
+                            from: step[1],
+                            to: step[1],
+                            time: step[2]
+                        });
+                    }
+                } else if (step[0] === "抵達") {
+                    // 忽略抵達步驟
+                    continue;
+                } else {
+                    // 交通工具段落
+                    const segment = {
+                        mode: step[0],
+                        from: step[1],
+                        to: step[1],
+                        time: step[2]
+                    };
+                    
+                    // 檢查前面是否有步行可以合併
+                    if (i > 0 && (steps[i-1][0] === "步行轉乘" || steps[i-1][0] === "走路")) {
+                        segment.from = steps[i-1][1];
+                    }
+                    
+                    // 檢查後面是否有連續的同一交通工具
+                    while (i < steps.length - 1 && steps[i+1] && steps[i+1][0] === step[0]) {
+                        i++;
+                        segment.to = steps[i][1];
+                        segment.time = steps[i][2];
+                    }
+                    
+                    segments.push(segment);
+                }
+            }
+            
+            return segments;
+        }
+    </script>
+</body>
+</html>
