@@ -22,7 +22,7 @@ try:
 
     # 載入「全時段_高鐵出發路線」集合
     raw_data = {}
-    for doc in db["路線班表字典"].find():
+    for doc in db["全時段_高鐵出發路線"].find():
         for key, value in doc.items():
             if key != "_id":
                 raw_data[key] = value
