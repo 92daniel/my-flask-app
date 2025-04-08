@@ -5,7 +5,7 @@ from geopy.distance import geodesic
 from datetime import datetime, timedelta
 import logging
 from collections import OrderedDict
-from pymongo import MongoClient  # ← 新增：連接 MongoDB
+from pymongo import MongoClient
 
 app = Flask(__name__)
 
@@ -14,19 +14,19 @@ logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 # ===============================
-# 連接 MongoDB 並載入兩筆資料：全時段路線 + route_stops
+# 連接 MongoDB 並載入路線班表字典 + route_stops
 # ===============================
 try:
     client = MongoClient(os.getenv("MONGO_URI", "mongodb://localhost:27017/"))
     db = client["大數據專題"]
 
-    # 載入「全時段_高鐵出發路線」集合
+    # 載入「路線班表字典」集合
     raw_data = {}
     for doc in db["路線班表字典"].find():
         for key, value in doc.items():
             if key != "_id":
                 raw_data[key] = value
-    logger.info(f"從 MongoDB 成功載入 {len(raw_data)} 條全時段路線。")
+    logger.info(f"從 MongoDB 成功載入 {len(raw_data)} 筆班表路線。")
 
     # 載入 route_stops 集合
     route_stops_doc = db["route_stops"].find_one()
@@ -47,9 +47,8 @@ all_end_coords = []
 for key, value in raw_data.items():
     if "目的地座標" in value:
         end_lat, end_lng = value["目的地座標"]
-        route_key = f"24.80818,121.0405→{end_lat},{end_lng}"
-        route_data[route_key] = value
-        all_end_coords.append((end_lat, end_lng, route_key))
+        route_data[key] = value
+        all_end_coords.append((end_lat, end_lng, key))
 
 
 @app.route("/")
